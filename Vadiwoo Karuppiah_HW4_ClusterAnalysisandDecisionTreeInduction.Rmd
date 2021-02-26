@@ -1,0 +1,218 @@
+---
+title: 'HW4 : Cluster Analysis and Decision Tree Induction'
+author: "Vadiwoo Karuppiah"
+date: "12/2/2019"
+output: html_document
+---
+
+
+### Install Required packages
+```{r install_packages}
+#install.packages("naivebayes")
+#install.packages("rpart")
+#install.packages("rpart.plot")
+#install.packages("readr")
+
+```
+
+### Load required Libraries
+```{r Load_Libraries, results='hide',warning=FALSE}
+
+library(rpart)
+library(rpart.plot)
+library(readr)
+library(caret)
+library(rattle)
+library(dplyr)
+```
+### Loading Dataset
+```{r, loading data}
+Disputed_Essay_data<- read.csv("Disputed_Essay_data.csv")
+dim(Disputed_Essay_data)
+str(Disputed_Essay_data)
+head(Disputed_Essay_data)
+```
+
+### Data Preprocessing
+```{r, data preprocessing}
+#preprocessing
+sum(is.na(Disputed_Essay_data))
+
+### Identifying Missing Values
+sum(!complete.cases(Disputed_Essay_data))
+
+#view author columns 
+table(Disputed_Essay_data$author)
+
+# Filtering Non-Disputed Data for analysis
+filter_auths <- c("dispt", "HM", "Jay") 
+non_dispute_data <- select(Disputed_Essay_data, -c(2) )%>%
+  filter(!author %in% filter_auths) %>%
+  droplevels()
+str(non_dispute_data)
+
+# Filtering Disputed Data  from dataset
+dispute_data <- select(Disputed_Essay_data, -c(2)) %>%
+  filter(author=="dispt")%>%
+  droplevels()
+
+str(dispute_data)
+```
+
+### **METHOD 1 : Decision Tree**
+
+### Data Partitioning 
+```{r, data partitioning}
+### Sampling the data into Train and Test Datasets.
+#sampling of 70% - 30%.
+set.seed(1234)
+library(caret)
+TrainingDataIndex <- createDataPartition(non_dispute_data$author, p=0.70, list = FALSE)
+#Training Data
+train_data <- non_dispute_data[TrainingDataIndex,]
+#Test Data
+test_data <- non_dispute_data[-TrainingDataIndex,]
+```
+### Building model
+```{r}
+library(rattle)
+library(rpart)
+library(rpart.plot)
+tr_control <- trainControl(method = "cv", number = 3)
+
+dt_model <- train(author ~.,
+                  data = non_dispute_data,
+                  method = "rpart",
+                  metric = "Accuracy",
+                  control = rpart.control(minsplit = 10, maxdepth = 3, cp = 0.07),
+                  trControl = tr_control)
+# Decision Tree
+library(rattle)
+fancyRpartPlot(dt_model$finalModel)
+
+
+# Testing the model
+predict_model <- predict(dt_model, test_data, type="raw")
+confusionMatrix(table(test_data[,1], predict_model))
+
+
+#Predicting the Disputed Authors
+
+predict_model <- predict(dt_model, dispute_data, type="raw")
+table(dispute_data[,1], predict_model)
+```
+
+### **OUTPUT :**
+The Decision Tree Model has predicted that all the disputed essays was written by Madison.
+
+
+
+
+### **METHOD 2 : Cluster Analysis**
+```{r, cluster analysis}
+#Removing author "Jay"and "HM" from dataset 
+filtered_dataset <- filter(Disputed_Essay_data, author != "Jay" & author != "HM")
+str(filtered_dataset)
+#Removing  author column form filtered dataset 
+filtered_data_noauth<- select(filtered_dataset, -c(1))
+str(filtered_data_noauth)
+```
+### Cluster Analysis : Data Preprocessing 
+```{r}
+#Add File names to the row names in the dataset
+rownames(filtered_data_noauth) <- filtered_data_noauth[,1]
+str(filtered_data_noauth)
+data <- select(filtered_data_noauth, -c(1))
+str(data)
+df <- na.omit(data)
+df <- scale(data, center = T, scale = T) 
+summary(df)
+head(df)
+```
+### Distance function and visualization
+```{r}
+library(factoextra) 
+distance <- get_dist(df, method = "euclidean") 
+fviz_dist(distance, gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"))
+```
+
+#Elbow method to decide Optimal Number of Clusters
+```{r}
+set.seed(8) 
+wss <- function(k){  
+  return(kmeans(df, k, nstart = 25)$tot.withinss) }
+k_values <- 1:15
+wss_values <- purrr::map_dbl(k_values, wss)
+plot(x = k_values, y = wss_values,      
+     type = "b", frame = F,     
+     xlab = "Number of clusters K",     
+     ylab = "Total within-clusters sum of square")
+```
+
+### **Output :**
+The graph shows that 2 is the optimal number of clusters for this dataset.
+
+
+
+### kmeans Function
+```{r}
+km_output <- kmeans(df, centers = 2, nstart = 25, iter.max = 100, algorithm = "Hartigan-Wong")
+str(km_output)
+names(km_output)
+typeof(km_output)
+length(km_output)
+km_output$cluster
+
+
+
+#Loss Function: Sum of Square Error
+km_output$totss
+km_output$withinss
+km_output$betweenss
+sum(c(km_output$withinss, km_output$betweenss))
+cohesion <- sum(km_output$withinss)/km_output$totss 
+cohesion
+
+#Visualize Cluster Assignment
+fviz_cluster(km_output, data = df)
+```
+
+
+### **Output :**
+Most of the disputed files are grouped together with Madison's cluster.
+
+
+### Hierarchical Clustering
+```{r}
+
+hac_output <- hclust(dist(df, method = "euclidean"), method = "complete") 
+
+plot(hac_output, main="Dendogram using HAC algorithm",xlab = "Author", ylab = "Euclidean Distance", cex = 0.6, hang = -1)
+
+
+
+
+
+#Ouput Desirable Number of Clusters After Modeling
+hac_cut <- cutree(hac_output, 1)
+table(hac_cut, filtered_dataset$author)
+
+
+hac_cut <- cutree(hac_output, 2)
+table(hac_cut, filtered_dataset$author)
+#output the names in the different cluster
+for (i in 1:length(hac_cut)){  
+  if(hac_cut[i] != km_output$cluster[i]) print(names(hac_cut)[i])
+}
+
+#output the names in the same cluster
+for (i in 1:length(hac_cut)){  
+  if(hac_cut[i] == km_output$cluster[i]) print(names(hac_cut)[i])
+}
+
+
+```
+From above results, we can see that Disputed essays and Madison's essays are are not grouped together with Hamilton's cluster, which concluded that the disputed essays are written by Madison.
+
+#### **Conclusion**
+The Decision Tree and the Clustering analysis using both the models- K-Means and HAC, shows that the  disputed Federal essays are written by Madison.

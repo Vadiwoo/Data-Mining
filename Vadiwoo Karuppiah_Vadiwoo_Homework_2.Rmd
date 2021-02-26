@@ -1,0 +1,196 @@
+---
+title: "Homework 2 -Digit Recognition with Decision Tree and Naïve Bayes algorithm"
+author: "Vadiwoo Karuppiah"
+date: "11/7/2019"
+output: html_document
+---
+
+### Install Required packages
+```{r install_packages}
+#install.packages("naivebayes")
+#install.packages("rpart")
+#install.packages("rpart.plot")
+#install.packages("caret")
+#install.packages("RColorBrewer")
+#install.packages("e1071")
+#install.packages("FNN")
+#install.packages("klaR")
+#install.packages("kernlab")
+
+```
+
+### **Load required Libraries**
+```{r Load_Libraries, results='hide',warning=FALSE}
+library(naivebayes)
+library(rpart)
+library(rpart.plot)
+library(readr)
+library(caret)
+library(RColorBrewer)
+library(e1071)
+library(FNN)
+library(klaR)
+library(kernlab)
+
+```
+
+### **Loading the dataset**
+```{r load_data, warning=FALSE}
+train <- read_csv("Kaggle-digit-train.csv")
+#Dimension of the data
+dim(train)
+#First 10 rows of dataset
+head(train[1:10])
+```
+### **Idetifying duplicated data**
+```{r data issues1}
+which(duplicated(train))
+```
+
+### **Identifying Missing Values**
+```{r}
+sum(!complete.cases(train))
+```
+
+### **Data Cleaning**
+```{r data_cleansing, warning=FALSE}
+#Converting the "label" attribute to factor, is the digit that was drawn by the user. 
+train[, 1] <- as.factor(train[, 1]$label)  # As Category
+
+#All the other columns are numeric:
+head(sapply(train[1,], class))
+
+#Removing Some columns that  contain zero for all observations or they have near zero variance. 
+train_orig <- train
+
+nzv.data <- nearZeroVar(train, saveMetrics = TRUE)
+drop.cols <- rownames(nzv.data)[nzv.data$nzv == TRUE]
+train <- train[,!names(train) %in% drop.cols]
+
+```
+
+### **Exploratoty Data Analysis**
+```{r percentage analysis, warning=FALSE}
+
+CUSTOM_BNW_PLOT <- colorRampPalette(brewer.pal(10, "Set3"))
+LabTable <- table(train_orig$label)
+par(mfrow = c(1, 1))
+percentage <- round(LabTable/sum(LabTable) * 100)
+labels <- paste0(row.names(LabTable), " (", percentage, "%) ")
+pie(LabTable, labels = labels, col = CUSTOM_BNW_PLOT(10), main = "Pie chart for Digits Distribution (Training Set)")
+```
+
+
+
+
+
+**OUTPUT: **
+The pie chart shows that all digits have equal distribution.
+
+
+
+
+### **DECISION TREE ALGORITHM**
+```{r decision tree algorithm}
+clean_data <- train 
+datasample <- sample(2, nrow(clean_data), replace=TRUE,prob = c(0.8,0.2))
+
+traindata <- clean_data[datasample==1,]
+testdata <- clean_data[datasample==2,]
+
+#Validating the 80-20 split
+str(traindata)
+str(testdata)
+```
+
+### **Building the model using Decision Tree Algorithm**
+```{r building model-decision tree, warning=FALSE, }
+dt_model <-rpart(formula = label~ ., data = traindata, method = "class")
+typeof(dt_model)
+names(dt_model)
+print(dt_model)
+fit <- rpart(label~., data = traindata, method = 'class')
+rpart.plot(fit, extra = 106)
+###**Predicting label on Test Data**
+predict_att <-predict(fit, testdata, type = 'class')
+table_mat <- table(testdata$label, predict_att)
+table_mat
+
+#Performance Measurement
+accuracy_Test <- sum(diag(table_mat)) / sum(table_mat)
+print(paste('Accuracy for test', accuracy_Test))
+
+###**Predicting label on Train Data**
+predict_att_train <-predict(fit, traindata, type = 'class')
+table_mat_train <- table(traindata$label, predict_att_train)
+table_mat_train
+
+#Performance Measurement on Train Data
+accuracy_Train <- sum(diag(table_mat_train)) / sum(table_mat_train)
+print(paste('Accuracy for train', accuracy_Train))
+
+### **Tuning Hyper-Parameters**
+accuracy_tune <- function(fit) {
+  predict_att <- predict(fit, testdata, type = 'class')
+  table_mat <- table(testdata$label, predict_att)
+  accuracy_Test <- sum(diag(table_mat)) / sum(table_mat)
+  accuracy_Test
+}
+
+control <- rpart.control(minsplit = 4,minbucket = round(5 / 3),maxdepth = 3,cp = 0)
+tune_fit <- rpart(label~., data = traindata, method = 'class', control = control)
+accuracy_tune(tune_fit)
+```
+### **Building the model using Naïve Bayes Algorithm**
+```{r build_datasets, warning=FALSE}
+# So, all digits contribute almost equally to the data set implying that the train set is appropriately randomly selected. 
+set.seed(12340)
+trainIndex <- createDataPartition(train$label, p = 0.1, list = FALSE, times = 1)
+allindices <- c(1:42000)
+training <- train[trainIndex,]
+testing <- train[-trainIndex,]
+vali0_index <- allindices[! allindices %in% trainIndex]
+
+testIndex <- createDataPartition(testing$label, p = 0.11, list = FALSE, times = 1)
+testing <- testing[testIndex,]
+original_validindex <- vali0_index[testIndex]
+```
+
+
+```{r naive_bayes_model, warning=FALSE}
+model.naiveBayes <- naive_bayes(training$label ~., data = training)
+summary(model.naiveBayes)
+#Predict with NBC
+prediction.naiveBayes <- predict(model.naiveBayes, newdata = testing, type = "class")
+confusionMatrix(factor(prediction.naiveBayes), factor(testing$label))
+```
+
+
+### **Train the model**
+```{r naive_train, warning=FALSE, results=FALSE}
+
+#Fine Tune the Models
+nbc <- trainControl(method = "cv", number = 10)
+modnb <- train(label ~. , data = training, method = "nb", trControl = nbc)
+```
+
+### **Print model**
+```{r naive_model, warning=FALSE}
+
+modnb
+```
+**OUTPUT** : The model has predicted with an accuracy of ~82%.
+
+### **Algorithm performance comparison**
+
+As the name suggests, Naive Bayes algorithm makes an assumption as all the variables in the dataset is “Naive” which means  the attributes are not correlated to each other. It assumes a underlying probabilistic model (Bayes theorem). It is noted that Naive Bayes algorithm is suitable for big data to provide result that's highly accurate.And also, if we are trying to predict a categorical value like (red, green, up, down) or predicting continuous value like 2.9, 3.4,  Decision Trees will be a better algorithm to use. I this homework, we are predicting a numerical value and Naive Bayes expected to provide better accuracy. 
+
+### **CONCLUSION**
+Naive Bayes Algorithm provides better acuuracy for Digit Recognizer Dataset as compare to Decision Tree Algorithm.
+
+**REFERENCES**
+
+https://www.kaggle.com/bhaveshthaker/classification-prediction-using-decision-tree-knn
+
+https://www.kaggle.com/kobakhit/digital-recognizer-in-r/log
+

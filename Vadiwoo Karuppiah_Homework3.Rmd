@@ -1,0 +1,213 @@
+---
+title: "Homework 3: Artificial Neural Network"
+author: "Vadiwoo Karuppiah"
+date: "11/22/2019"
+output: html_document
+---
+
+
+### Install Required packages
+```{r install_packages}
+
+# install.packages("rpart")
+# install.packages("rpart.plot")
+# install.packages("readr")
+# install.packages("ggplot2")
+# install.packages("lattice")
+# install.packages("caret")
+# install.packages("C50")
+# install.packages("randomForest")
+# install.packages("nnet")
+# install.packages("RRF")
+
+
+```
+
+### Load required Libraries
+```{r Load_Libraries, results='hide',warning=FALSE}
+
+library(rpart)
+library(rpart.plot)
+library(readr)
+library(ggplot2)
+library(lattice)
+library(caret)
+library(C50)
+library(randomForest)
+library(nnet)
+library(rattle)
+library(RRF)
+library(dplyr)
+library(magrittr)
+library(tidyverse)
+library(rsample)
+library(recipes)
+library(keras)
+library(corrplot)
+
+```
+### Loading the dataset
+
+```{r Load_data}
+
+students_data <- read.csv("Students' Academic Performance.csv" )
+dim(students_data)
+str(students_data)
+head(students_data)
+summary(students_data)
+```
+
+
+### Pre-processing the data
+
+```{r prep-processing}
+# Check if there are any na values in the dataset.
+sum(is.na(students_data))
+
+### Identifying Missing Values
+sum(!complete.cases(students_data))
+ 
+```
+### Data Visualization
+```{r}
+ggplot(students_data, aes(Class, fill="salmon")) + geom_bar()
+```
+
+
+
+### RFE Model for Feature Selection
+Recursive Feature Elimination method (RFE) is a feature selection method provided by caret R package 
+# RFE Model
+```{r RFE_model}
+set.seed(1234)
+rfe_control_params <- rfeControl(functions=rfFuncs, method="cv", number=10)
+rfe_method<- rfe(students_data[,1:16], students_data[,17], sizes=c(1:17), rfeControl=rfe_control_params)
+print(rfe_method)
+predictors(rfe_method)
+plot(rfe_method, type=c("g", "o"))
+
+# Feautures Correlation 
+correlationMatrix <- cor(students_data[,10:13])
+corrplot(correlationMatrix, type = "upper")
+correlationMatrix
+findCorrelation(correlationMatrix, cutoff=0.75)
+
+
+```
+```{r }
+# RRf model to rank features by importance
+set.seed(1234)
+rrfModel <- train(Class ~ ., data=students_data, method="RRF")
+importance <- varImp(rrfModel, scale=F)
+importance
+plot(importance, top = 20, main='Feature Importance')
+```
+
+
+
+### Output :
+StudentAbsenceDays, VisITedResources, raisedhands, AnnouncementsView, ParentAnsweringSurvey are the top features.  Semester attribute is not in the list, so we are removing this attribute from our data.
+```{r}
+# Removing the semester attribute
+students_data <- students_data[,-8]
+```
+
+### **Method 1 : Building Artifical Neural Networks Model with nnet package**
+
+### Sampling the data into Train and Test Datasets.
+
+```{r dataSampling}
+set.seed(1234)
+#sampling of 70% - 30%.
+TrainingDataIndex <- createDataPartition(students_data$Class, p=0.70, list = FALSE)
+#Training Data
+training_data <- students_data[TrainingDataIndex,]
+#Test Data
+test_data <- students_data[-TrainingDataIndex,]
+```
+
+```{r Build_model, echo = T, results = 'hide'}
+#Train Params
+trcontrolparams <- trainControl(method = "repeatedcv", number = 5, repeats=8)
+## Building the Model with Neural Networks
+ANN_model <- train(training_data[,-17], training_data$Class,
+                   method = "nnet",
+                   trControl = trcontrolparams,
+                   preProcess = c("scale", "center"),
+                   na.action =  na.omit)
+modelLookup('nnet')
+
+
+```
+
+
+### Test the model with test dataset
+```{r test_model}
+ANN_predict <- predict(ANN_model, test_data)
+```
+
+
+### Validate the results
+```{r validate}
+confusionMatrix(ANN_predict, test_data$Class)
+```
+### **Method 2 : Building Artifical Neural Networks Model with keras package**
+
+### **Data Preprocessing **
+```{r}
+students_data2 <- read.csv("Students' Academic Performance.csv" )
+# All factor variables converted to numeric 
+students_data2 <- students_data2 %<>% mutate_if(is.factor,as.numeric)
+str(students_data)
+
+```
+
+### Data Splitting
+```{r}
+students_data2_tbl <- students_data2 %>%  select(-Semester) %>%  drop_na() %>%  select(Class, everything()) 
+set.seed(100) 
+train_test_split <- initial_split(students_data2_tbl, prop = 0.8) 
+train_tbl <- training(train_test_split) 
+test_tbl <- testing(train_test_split)
+str(students_data2_tbl)
+```
+### Data Preprocessing
+```{r}
+rec_obj <- recipe(Class ~ ., data = train_tbl) %>%  
+  step_discretize(raisedhands, options = list(cuts = 4)) %>%  
+  step_dummy(all_nominal(), -all_outcomes()) %>%  
+  step_center(all_predictors(), -all_outcomes()) %>%  
+  step_scale(all_predictors(), -all_outcomes()) %>%  
+  prep(data = train_tbl)
+rec_obj
+
+```
+
+```{r}
+x_train_tbl <- bake(rec_obj, new_data = train_tbl) %>% select(-Class) 
+x_test_tbl <- bake(rec_obj, new_data = test_tbl) %>% select(-Class) 
+y_train_vec <- ifelse(pull(train_tbl, Class) == "L", 1, 2)
+y_test_vec <-  ifelse(pull(test_tbl, Class) == "L", 1, 2) 
+str(x_train_tbl)
+```
+```{create model}
+#create model
+
+model_keras <- keras_model_sequential() 
+model_keras %>%
+  layer_dense(units = 5, activation = 'relu', input_shape = c(13)) %>%
+  layer_dense(units = 1)
+
+model_keras
+
+```
+### ISSUES:
+Unable to build the model using keras package due to RStudio unable to find tensorflow() from python environment.
+
+### **CONCLUSION**
+The ANN model that was built using nnet package has produced 1.00 accuracy. 
+
+### **REFERENCES**
+https://machinelearningmastery.com/feature-selection-with-the-caret-r-package/
+
+http://www.rebeccabarter.com/blog/2019-06-06_pre_processing/
